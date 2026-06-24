@@ -1,6 +1,8 @@
 import gradio as gr
 import pandas as pd
 import re
+import sys
+import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -11,6 +13,10 @@ import numpy as np
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
+HKU_AVAILABLE = False
+HKU_ERROR = ""
+sm = None
+
 try:
     from hikyuu import (
         StockManager, SYS_Simple, SG_Flex, EMA, CLOSE,
@@ -19,9 +25,18 @@ try:
     )
     sm = StockManager.instance()
     HKU_AVAILABLE = True
-except ImportError:
+except Exception as e:
     HKU_AVAILABLE = False
+    HKU_ERROR = str(e)
     sm = None
+
+
+def get_hikyuu_status():
+    if HKU_AVAILABLE:
+        return "✅ Hikyuu 已连接，可以进行回测"
+    else:
+        py_path = sys.executable
+        return f"❌ Hikyuu 未连接\n\n当前Python路径：{py_path}\n\n错误信息：{HKU_ERROR}\n\n请检查：\n1. 是否在此Python环境中安装了hikyuu\n2. 尝试运行：pip install hikyuu"
 
 
 def plot_kline(kline_df, trades_df, fast_period, slow_period):
@@ -336,6 +351,8 @@ def select_sz000001():
 
 with gr.Blocks(title="Hikyuu 策略回测可视化工具") as demo:
     gr.Markdown("# Hikyuu 策略回测可视化工具")
+
+    hikyuu_status_md = gr.Markdown(get_hikyuu_status())
 
     with gr.Row():
         with gr.Column(scale=1):
