@@ -17,6 +17,30 @@ HKU_AVAILABLE = False
 HKU_ERROR = ""
 sm = None
 
+
+def _setup_hikyuu_dll_path():
+    try:
+        import site
+        site_packages = site.getsitepackages()
+        for sp in site_packages:
+            hku_cpp_dir = os.path.join(sp, 'hikyuu', 'cpp')
+            if os.path.isdir(hku_cpp_dir):
+                os.add_dll_directory(hku_cpp_dir)
+                os.environ['PATH'] = hku_cpp_dir + os.pathsep + os.environ.get('PATH', '')
+                return True
+        user_site = site.getusersitepackages()
+        hku_cpp_dir = os.path.join(user_site, 'hikyuu', 'cpp')
+        if os.path.isdir(hku_cpp_dir):
+            os.add_dll_directory(hku_cpp_dir)
+            os.environ['PATH'] = hku_cpp_dir + os.pathsep + os.environ.get('PATH', '')
+            return True
+    except Exception:
+        pass
+    return False
+
+
+_setup_hikyuu_dll_path()
+
 try:
     from hikyuu import (
         StockManager, SYS_Simple, SG_Flex, EMA, CLOSE,
