@@ -1,8 +1,72 @@
+# ============================================================
+# 必须在所有其他 import 之前设置 hikyuu 的 DLL 路径并加载
+# 原因：hikyuu 包含 C++ 扩展（DLL/PYD），Python 3.8+ 在 Windows 上
+# 加载 DLL 时只识别 os.add_dll_directory() 注册的路径，不读系统 PATH
+# ============================================================
+import os
+import sys
+
+# 你的 hikyuu DLL 目录（根据 pip show hikyuu 的 Location 拼出）
+_HKU_CPP = r'C:\Users\123\AppData\Local\Programs\Python\Python311\Lib\site-packages\hikyuu\cpp'
+
+if os.path.isdir(_HKU_CPP):
+    os.add_dll_directory(_HKU_CPP)
+    os.environ['PATH'] = _HKU_CPP + os.pathsep + os.environ.get('PATH', '')
+
+HKU_AVAILABLE = False
+HKU_ERROR = ""
+sm = None
+_StockManager = None
+_SYS_Simple = None
+_SG_Flex = None
+_EMA = None
+_CLOSE = None
+_MM_FixedCount = None
+_ST_FixedPercent = None
+_crtTM = None
+_TC_FixedA2017 = None
+_Query = None
+_Datetime = None
+
+try:
+    from hikyuu import (
+        StockManager, SYS_Simple, SG_Flex, EMA, CLOSE,
+        MM_FixedCount, ST_FixedPercent, crtTM, TC_FixedA2017,
+        Query, Datetime
+    )
+    _StockManager = StockManager
+    _SYS_Simple = SYS_Simple
+    _SG_Flex = SG_Flex
+    _EMA = EMA
+    _CLOSE = CLOSE
+    _MM_FixedCount = MM_FixedCount
+    _ST_FixedPercent = ST_FixedPercent
+    _crtTM = crtTM
+    _TC_FixedA2017 = TC_FixedA2017
+    _Query = Query
+    _Datetime = Datetime
+    sm = StockManager.instance()
+    HKU_AVAILABLE = True
+except Exception as e:
+    HKU_AVAILABLE = False
+    HKU_ERROR = repr(e)
+    sm = None
+
+
+def get_hikyuu_status():
+    if HKU_AVAILABLE:
+        return "✅ Hikyuu 已连接，可以进行回测"
+    else:
+        py_path = sys.executable
+        return f"❌ Hikyuu 未连接\n\nPython路径：{py_path}\n\n错误信息：{HKU_ERROR}"
+
+
+# ============================================================
+# 加载完 hikyuu 之后，再加载其他库
+# ============================================================
 import gradio as gr
 import pandas as pd
 import re
-import sys
-import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -12,55 +76,6 @@ import numpy as np
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
-
-HKU_AVAILABLE = False
-HKU_ERROR = ""
-sm = None
-
-
-def _setup_hikyuu_dll_path():
-    try:
-        import site
-        site_packages = site.getsitepackages()
-        for sp in site_packages:
-            hku_cpp_dir = os.path.join(sp, 'hikyuu', 'cpp')
-            if os.path.isdir(hku_cpp_dir):
-                os.add_dll_directory(hku_cpp_dir)
-                os.environ['PATH'] = hku_cpp_dir + os.pathsep + os.environ.get('PATH', '')
-                return True
-        user_site = site.getusersitepackages()
-        hku_cpp_dir = os.path.join(user_site, 'hikyuu', 'cpp')
-        if os.path.isdir(hku_cpp_dir):
-            os.add_dll_directory(hku_cpp_dir)
-            os.environ['PATH'] = hku_cpp_dir + os.pathsep + os.environ.get('PATH', '')
-            return True
-    except Exception:
-        pass
-    return False
-
-
-_setup_hikyuu_dll_path()
-
-try:
-    from hikyuu import (
-        StockManager, SYS_Simple, SG_Flex, EMA, CLOSE,
-        MM_FixedCount, ST_FixedPercent, crtTM, TC_FixedA2017,
-        Query, Datetime
-    )
-    sm = StockManager.instance()
-    HKU_AVAILABLE = True
-except Exception as e:
-    HKU_AVAILABLE = False
-    HKU_ERROR = str(e)
-    sm = None
-
-
-def get_hikyuu_status():
-    if HKU_AVAILABLE:
-        return "✅ Hikyuu 已连接，可以进行回测"
-    else:
-        py_path = sys.executable
-        return f"❌ Hikyuu 未连接\n\n当前Python路径：{py_path}\n\n错误信息：{HKU_ERROR}\n\n请检查：\n1. 是否在此Python环境中安装了hikyuu\n2. 尝试运行：pip install hikyuu"
 
 
 def plot_kline(kline_df, trades_df, fast_period, slow_period):
