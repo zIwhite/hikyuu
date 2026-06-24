@@ -46,6 +46,16 @@ try:
     _Query = Query
     _Datetime = Datetime
     sm = StockManager.instance()
+
+    from hikyuu import load_hikyuu
+    load_hikyuu(
+        stock_list=["all"],
+        ktype_list=["day"],
+        load_history_finance=False,
+        load_weight=False,
+        start_spot=False
+    )
+
     HKU_AVAILABLE = True
 except Exception as e:
     HKU_AVAILABLE = False
