@@ -229,7 +229,8 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
         my_st = ST_FixedPercent(stop_loss)
         sys = SYS_Simple(tm=my_tm, sg=my_sg, mm=my_mm, st=my_st)
 
-        stk = sm[stock_code]
+        full_code = normalize_stock_code(stock_code)
+        stk = sm[full_code]
         sys.run(stk, Query(-backtest_days))
 
         performance = sys.tm.get_performance()
@@ -347,23 +348,64 @@ def get_stock_name(stock_code):
         "sz000001": "平安银行"
     }
     if HKU_AVAILABLE:
-        stock = sm.get_stock(stock_code)
+        code = stock_code.strip()
+        full_code = normalize_stock_code(code)
+        stock = sm.get_stock(full_code)
         if stock:
             return stock.name
-        return "未找到该股票"
+        return f"未找到股票: {full_code}"
     else:
         return "（未连接Hikyuu）" + stock_names.get(stock_code, "未知股票")
 
 
+def normalize_stock_code(code):
+    code = code.strip().lower()
+    if re.match(r'^\d{6}$', code):
+        for prefix in ['sh', 'sz']:
+            full_code = prefix + code
+            if sm and sm.get_stock(full_code):
+                return full_code
+        return 'sh' + code
+    elif re.match(r'^(sh|sz)\d{6}$', code):
+        return code
+    return code
+
+
+def search_stocks(query):
+    """搜索匹配的股票"""
+    if not HKU_AVAILABLE or not sm or not query:
+        return []
+    query = query.strip().lower()
+    results = []
+    if re.match(r'^\d{6}$', query):
+        for prefix in ['sh', 'sz']:
+            full_code = prefix + query
+            stock = sm.get_stock(full_code)
+            if stock:
+                results.append((full_code, stock.name))
+    elif re.match(r'^(sh|sz)\d{6}$', query):
+        stock = sm.get_stock(query)
+        if stock:
+            results.append((query, stock.name))
+    else:
+        for stock in sm:
+            code = stock.code
+            name = stock.name
+            if query in code.lower() or query in name:
+                results.append((code, name))
+                if len(results) >= 10:
+                    break
+    return results
+
+
 def validate_stock(stock_code):
-    pattern = r'^(sh|sz)\d{6}$'
-    if not re.match(pattern, stock_code):
-        return False, "股票代码格式不正确，请输入如 sh600000 或 sz000001 格式"
     if HKU_AVAILABLE:
-        stock = sm.get_stock(stock_code)
+        full_code = normalize_stock_code(stock_code)
+        stock = sm.get_stock(full_code)
         if not stock:
-            return False, "本地数据中未找到该股票，请先下载数据"
-    return True, "验证通过"
+            return False, f"本地数据中未找到该股票: {full_code}，请先下载数据"
+        return True, f"验证通过: {stock.name}"
+    return True, "验证通过（Hikyuu未连接）"
 
 
 def validate_params(fast_period, slow_period, stop_loss, buy_quantity):
@@ -377,15 +419,15 @@ def validate_params(fast_period, slow_period, stop_loss, buy_quantity):
 
 
 def select_sh000001():
-    return "sh000001", get_stock_name("sh000001")
+    return "000001", get_stock_name("sh000001")
 
 
 def select_sh600000():
-    return "sh600000", get_stock_name("sh600000")
+    return "600000", get_stock_name("sh600000")
 
 
 def select_sz000001():
-    return "sz000001", get_stock_name("sz000001")
+    return "000001", get_stock_name("sz000001")
 
 
 with gr.Blocks(title="Hikyuu 策略回测可视化工具") as demo:
@@ -400,13 +442,22 @@ with gr.Blocks(title="Hikyuu 策略回测可视化工具") as demo:
             with gr.Row():
                 stock_code_input = gr.Textbox(
                     label="股票代码",
-                    value="sh600000",
+                    placeholder="输入6位数字或股票名称搜索",
+                    value="600000",
                     interactive=True
                 )
                 stock_name_label = gr.Label(
                     value="浦发银行",
                     label="股票名称"
                 )
+
+            stock_search_btn = gr.Button("搜索股票", size="sm")
+            stock_dropdown = gr.Dropdown(
+                label="搜索结果",
+                choices=[],
+                interactive=True,
+                visible=False
+            )
 
             gr.Markdown("#### 常用股票")
 
@@ -531,6 +582,24 @@ with gr.Blocks(title="Hikyuu 策略回测可视化工具") as demo:
     backtest_days_num.change(lambda x: x, inputs=backtest_days_num, outputs=backtest_days_slider)
 
     stock_code_input.change(get_stock_name, inputs=stock_code_input, outputs=stock_name_label)
+
+    def handle_search(query):
+        results = search_stocks(query)
+        if results:
+            choices = [f"{code} - {name}" for code, name in results]
+            return gr.update(visible=True, choices=choices, value=None)
+        else:
+            return gr.update(visible=False, choices=[], value=None)
+
+    def handle_select_dropdown(selected):
+        if selected:
+            code = selected.split(" - ")[0]
+            return code, get_stock_name(code)
+        return "", ""
+
+    stock_search_btn.click(handle_search, inputs=stock_code_input, outputs=stock_dropdown)
+    stock_code_input.submit(handle_search, inputs=stock_code_input, outputs=stock_dropdown)
+    stock_dropdown.change(handle_select_dropdown, inputs=stock_dropdown, outputs=[stock_code_input, stock_name_label])
 
     sh000001_btn.click(select_sh000001, outputs=[stock_code_input, stock_name_label])
     sh600000_btn.click(select_sh600000, outputs=[stock_code_input, stock_name_label])
