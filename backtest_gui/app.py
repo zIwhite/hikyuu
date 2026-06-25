@@ -245,32 +245,47 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
         buy_quantity = int(buy_quantity)
         backtest_days = int(backtest_days)
 
+        full_code = normalize_stock_code(stock_code)
+        stk = sm.get_stock(full_code)
+        if stk is None:
+            error_md = f'<span style="color:red">**错误：无法获取股票 {full_code}，请检查股票代码是否正确或数据是否已下载**</span>'
+            empty_df = pd.DataFrame()
+            return error_md, empty_df, None, empty_df, None
+        
+        try:
+            if hasattr(stk, 'is_null') and stk.is_null():
+                error_md = f'<span style="color:red">**错误：股票 {full_code} 数据为空，请先下载数据**</span>'
+                empty_df = pd.DataFrame()
+                return error_md, empty_df, None, empty_df, None
+        except Exception:
+            pass
+
         my_tm = crtTM(init_cash=initial_capital, cost_func=TC_FixedA2017())
         my_sg = SG_Flex(EMA(CLOSE(), n=fast_period), slow_n=slow_period)
         my_mm = MM_FixedCount(buy_quantity)
         my_st = ST_FixedPercent(stop_loss)
-        sys = SYS_Simple(tm=my_tm, sg=my_sg, mm=my_mm, st=my_st)
+        my_sys = SYS_Simple(tm=my_tm, sg=my_sg, mm=my_mm, st=my_st)
 
-        full_code = normalize_stock_code(stock_code)
-        stk = sm[full_code]
-        sys.run(stk, Query(-backtest_days))
+        my_sys.run(stk, Query(-backtest_days))
 
-        performance = sys.tm.get_performance()
+        performance = my_sys.tm.get_performance()
 
         def get_perf(key, default="--"):
-            """使用索引访问（已在 Hikyuu 官方 notebook 007-SystemDetails.ipynb 验证可用）"""
             try:
                 val = performance[key]
                 if hasattr(val, '__float__'):
                     return float(val)
                 return val
-            except (KeyError, TypeError):
+            except (KeyError, TypeError, Exception):
                 return default
 
-        # 用 Hikyuu 真实指标名（从官方 notebook 007-SystemDetails.ipynb 第 142-200 行复制）
-        total_return = get_perf("已平仓帐户收益率%", "--")
+        total_return = get_perf("未平仓帐户收益率%", "--")
         annual_return = get_perf("帐户年复合收益率%", "--")
-        max_drawdown = get_perf("最大回撤百分比", "--")
+        try:
+            last_date = my_sys.tm.last_datetime
+            max_drawdown = -float(my_sys.tm.get_max_pull_back(last_date, Query.DAY))
+        except Exception:
+            max_drawdown = "--"
         win_rate = get_perf("赢利交易比例%", "--")
         profit_loss_ratio = get_perf("平均赢利/平均亏损比例", "--")
         total_trades = get_perf("已平仓交易总数", "--")
@@ -314,33 +329,40 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
                      fmt_int(win_trades), fmt_int(lose_trades)]
         })
 
-        trades = sys.tm.get_trade_list()
-        trade_data = []
-        for trade in trades:
-            datetime_str = trade.datetime.strftime("%Y-%m-%d")
-            price = trade.price
-            num = trade.number
-            amount = abs(price * num)
-            direction = "买入" if num > 0 else "卖出"
-            profit = trade.profit
-            trade_data.append({
-                "日期": datetime_str,
-                "方向": direction,
-                "价格": round(price, 2),
-                "数量": abs(int(num)),
-                "金额": round(amount, 2),
-                "盈亏": round(profit, 2)
-            })
+        # ===== 交易记录（使用官方 to_df，已确认列名） =====
+        trades_df_raw = my_sys.tm.get_trade_list().to_df()
+        if not trades_df_raw.empty:
+            # 只保留实际买卖交易（排除 INIT 初始化记录）
+            trades_filtered = trades_df_raw[trades_df_raw['business'].isin(['BUY', 'SELL'])].copy()
+            if not trades_filtered.empty:
+                # 安全处理日期转换：支持 Hikyuu Datetime 和 pandas datetime
+                date_list = []
+                for dt_val in trades_filtered['datetime']:
+                    if hasattr(dt_val, 'datetime'):
+                        date_list.append(dt_val.datetime().strftime("%Y-%m-%d"))
+                    else:
+                        date_list.append(pd.to_datetime(dt_val).strftime("%Y-%m-%d"))
+                
+                trades_df = pd.DataFrame({
+                    "日期": date_list,
+                    "方向": trades_filtered['business'].map({'BUY': '买入', 'SELL': '卖出'}).values,
+                    "价格": trades_filtered['realPrice'].round(2).values,
+                    "数量": trades_filtered['number'].abs().astype(int).values,
+                    "金额": (trades_filtered['realPrice'].abs() * trades_filtered['number'].abs()).round(2).values,
+                    "现金余额": trades_filtered['cash'].round(2).values
+                })
+                trades_df = trades_df.sort_values(by="日期", ascending=False).reset_index(drop=True)
+            else:
+                trades_df = pd.DataFrame(columns=["日期", "方向", "价格", "数量", "金额", "现金余额"])
+        else:
+            trades_df = pd.DataFrame(columns=["日期", "方向", "价格", "数量", "金额", "现金余额"])
 
-        trades_df = pd.DataFrame(trade_data)
-        if not trades_df.empty:
-            trades_df = trades_df.sort_values(by="日期", ascending=False).reset_index(drop=True)
-
+        # ===== K线数据（KRecord 属性 open/high/low/close/volume 已在 draw 模块源码确认） =====
         kdata = stk.get_kdata(Query(-backtest_days))
         kline_data = []
         for k in kdata:
             kline_data.append({
-                "日期": k.datetime.strftime("%Y-%m-%d"),
+                "日期": k.datetime.datetime().strftime("%Y-%m-%d"),
                 "开盘": round(k.open, 2),
                 "最高": round(k.high, 2),
                 "最低": round(k.low, 2),
@@ -349,14 +371,16 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
             })
         kline_df = pd.DataFrame(kline_data)
 
+        # ===== 资金曲线（使用官方 get_funds_curve，已确认 API） =====
+        # 获取K线日期列表作为资金曲线的日期
+        k_dates = stk.get_datetime_list(Query(-backtest_days))
+        # 用 funds_curve 获取每日总资产（返回 PriceList）
+        funds_list = my_sys.tm.get_funds_curve(k_dates, Query.DAY)
         equity_data = []
-        for i in range(len(sys.tm)):
-            rec = sys.tm[i]
+        for i, dt in enumerate(k_dates):
             equity_data.append({
-                "日期": rec.datetime.strftime("%Y-%m-%d"),
-                "现金": round(rec.cash, 2),
-                "市值": round(rec.market_value, 2),
-                "总资产": round(rec.asset, 2)
+                "日期": dt.datetime().strftime("%Y-%m-%d"),
+                "总资产": float(funds_list[i]) if i < len(funds_list) else initial_capital
             })
         equity_df = pd.DataFrame(equity_data)
 
@@ -366,7 +390,9 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
         return perf_md, perf_df, kline_fig, trades_df, equity_fig
 
     except Exception as e:
-        error_md = f'<span style="color:red">**错误：回测执行失败 - {str(e)}**</span>'
+        import traceback
+        error_detail = traceback.format_exc()
+        error_md = f'<span style="color:red">**错误：回测执行失败**</span>\n\n```\n{error_detail}\n```'
         empty_df = pd.DataFrame()
         return error_md, empty_df, None, empty_df, None
 
@@ -381,7 +407,12 @@ def get_stock_name(stock_code):
         code = stock_code.strip()
         full_code = normalize_stock_code(code)
         stock = sm.get_stock(full_code)
-        if stock:
+        if stock is not None:
+            try:
+                if hasattr(stock, 'is_null') and stock.is_null():
+                    return f"未找到股票: {full_code}"
+            except Exception:
+                pass
             return stock.name
         return f"未找到股票: {full_code}"
     else:
@@ -393,8 +424,15 @@ def normalize_stock_code(code):
     if re.match(r'^\d{6}$', code):
         for prefix in ['sh', 'sz']:
             full_code = prefix + code
-            if sm and sm.get_stock(full_code):
-                return full_code
+            if sm:
+                stk = sm.get_stock(full_code)
+                if stk is not None:
+                    try:
+                        if hasattr(stk, 'is_null') and stk.is_null():
+                            continue
+                    except Exception:
+                        pass
+                    return full_code
         return 'sh' + code
     elif re.match(r'^(sh|sz)\d{6}$', code):
         return code
@@ -450,8 +488,13 @@ def validate_stock(stock_code):
     if HKU_AVAILABLE:
         full_code = normalize_stock_code(stock_code)
         stock = sm.get_stock(full_code)
-        if not stock:
+        if stock is None:
             return False, f"本地数据中未找到该股票: {full_code}，请先下载数据"
+        try:
+            if hasattr(stock, 'is_null') and stock.is_null():
+                return False, f"本地数据中未找到该股票: {full_code}，请先下载数据"
+        except Exception:
+            pass
         return True, f"验证通过: {stock.name}"
     return True, "验证通过（Hikyuu未连接）"
 
