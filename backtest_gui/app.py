@@ -258,14 +258,22 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
         performance = sys.tm.get_performance()
 
         def get_perf(key, default="--"):
-            return performance.get(key, default)
+            """使用索引访问（已在 Hikyuu 官方 notebook 007-SystemDetails.ipynb 验证可用）"""
+            try:
+                val = performance[key]
+                if hasattr(val, '__float__'):
+                    return float(val)
+                return val
+            except (KeyError, TypeError):
+                return default
 
-        total_return = get_perf("未平仓帐户收益率%", "--")
-        annual_return = get_perf("年化收益率%", "--")
-        max_drawdown = get_perf("最大回撤%", "--")
+        # 用 Hikyuu 真实指标名（从官方 notebook 007-SystemDetails.ipynb 第 142-200 行复制）
+        total_return = get_perf("已平仓帐户收益率%", "--")
+        annual_return = get_perf("帐户年复合收益率%", "--")
+        max_drawdown = get_perf("最大回撤百分比", "--")
         win_rate = get_perf("赢利交易比例%", "--")
         profit_loss_ratio = get_perf("平均赢利/平均亏损比例", "--")
-        total_trades = get_perf("交易总数", "--")
+        total_trades = get_perf("已平仓交易总数", "--")
         win_trades = get_perf("赢利交易数", "--")
         lose_trades = get_perf("亏损交易数", "--")
 
@@ -394,30 +402,48 @@ def normalize_stock_code(code):
 
 
 def search_stocks(query):
-    """搜索匹配的股票"""
+    """搜索匹配的股票（支持代码和名称）
+    - '600000' → 匹配代码 sh600000
+    - '浦发' → 匹配名称包含"浦发"的股票
+    - '平安银行' → 匹配名称完全等于或包含
+    """
     if not HKU_AVAILABLE or not sm or not query:
         return []
-    query = query.strip().lower()
+    query = query.strip()
+    query_lower = query.lower()
     results = []
+
+    # 1. 精确代码匹配（6位数字）
     if re.match(r'^\d{6}$', query):
         for prefix in ['sh', 'sz']:
             full_code = prefix + query
             stock = sm.get_stock(full_code)
             if stock:
                 results.append((full_code, stock.name))
-    elif re.match(r'^(sh|sz)\d{6}$', query):
-        stock = sm.get_stock(query)
+                if len(results) >= 1:
+                    return results[:10]  # 精确匹配直接返回
+
+    # 2. 完整代码匹配（带前缀）
+    if re.match(r'^(sh|sz)\d{6}$', query_lower):
+        stock = sm.get_stock(query_lower)
         if stock:
-            results.append((query, stock.name))
-    else:
-        for stock in sm:
-            code = stock.code
-            name = stock.name
-            if query in code.lower() or query in name:
-                results.append((code, name))
-                if len(results) >= 10:
+            return [(query_lower, stock.name)]
+
+    # 3. 名称搜索（支持中文）
+    #    遍历所有股票，匹配名称包含关键词或代码包含关键词
+    for stock in sm:
+        try:
+            market_code = stock.market_code.lower()  # 如 "sh600000"
+            name = stock.name  # 如 "浦发银行"
+            # 匹配条件：名称包含关键词 或 代码包含关键词
+            if query in name or query_lower in market_code:
+                results.append((market_code, name))
+                if len(results) >= 20:
                     break
-    return results
+        except Exception:
+            continue
+
+    return results[:10]
 
 
 def validate_stock(stock_code):
