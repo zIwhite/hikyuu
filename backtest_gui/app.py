@@ -329,29 +329,86 @@ def run_backtest(stock_code, strategy, fast_period, slow_period, stop_loss, init
                      fmt_int(win_trades), fmt_int(lose_trades)]
         })
 
-        # ===== 交易记录（使用官方 to_df，已确认列名） =====
+        # ===== 交易记录 =====
         trades_df_raw = my_sys.tm.get_trade_list().to_df()
+        
+        # 调试：打印实际列名
+        import sys as _sys
+        _sys.stderr.write(f"[DEBUG] trades_df_raw columns: {list(trades_df_raw.columns)}\n")
+        _sys.stderr.write(f"[DEBUG] trades_df_raw dtypes:\n{trades_df_raw.dtypes}\n")
+        _sys.stderr.write(f"[DEBUG] trades_df_raw head:\n{trades_df_raw.head()}\n")
+        
         if not trades_df_raw.empty:
-            # 只保留实际买卖交易（排除 INIT 初始化记录）
-            trades_filtered = trades_df_raw[trades_df_raw['business'].isin(['BUY', 'SELL'])].copy()
-            if not trades_filtered.empty:
-                # 安全处理日期转换：支持 Hikyuu Datetime 和 pandas datetime
-                date_list = []
-                for dt_val in trades_filtered['datetime']:
-                    if hasattr(dt_val, 'datetime'):
-                        date_list.append(dt_val.datetime().strftime("%Y-%m-%d"))
-                    else:
-                        date_list.append(pd.to_datetime(dt_val).strftime("%Y-%m-%d"))
+            # 确定实际列名
+            cols = trades_df_raw.columns.tolist()
+            
+            # 查找交易方向列（可能是 'business', 'type', 'tradeType' 等）
+            dir_col = None
+            for col in ['business', 'type', 'tradeType', 'action', 'operation']:
+                if col in cols:
+                    dir_col = col
+                    break
+            
+            # 查找日期列
+            date_col = None
+            for col in ['datetime', 'date', 'time', 'dt']:
+                if col in cols:
+                    date_col = col
+                    break
+            
+            # 查找价格列
+            price_col = None
+            for col in ['realPrice', 'price', 'tradePrice']:
+                if col in cols:
+                    price_col = col
+                    break
+            
+            # 查找数量列
+            num_col = None
+            for col in ['number', 'amount', 'quantity', 'count']:
+                if col in cols:
+                    num_col = col
+                    break
+            
+            # 查找现金列
+            cash_col = None
+            for col in ['cash', 'balance', 'money']:
+                if col in cols:
+                    cash_col = col
+                    break
+            
+            if dir_col and not trades_df_raw.empty:
+                # 映射交易方向值
+                buy_values = ['BUY', 'buy', 'B', '买入', 'long', 'LONG']
+                sell_values = ['SELL', 'sell', 'S', '卖出', 'short', 'SHORT']
                 
-                trades_df = pd.DataFrame({
-                    "日期": date_list,
-                    "方向": trades_filtered['business'].map({'BUY': '买入', 'SELL': '卖出'}).values,
-                    "价格": trades_filtered['realPrice'].round(2).values,
-                    "数量": trades_filtered['number'].abs().astype(int).values,
-                    "金额": (trades_filtered['realPrice'].abs() * trades_filtered['number'].abs()).round(2).values,
-                    "现金余额": trades_filtered['cash'].round(2).values
-                })
-                trades_df = trades_df.sort_values(by="日期", ascending=False).reset_index(drop=True)
+                trades_filtered = trades_df_raw[trades_df_raw[dir_col].isin(buy_values + sell_values)].copy()
+                if not trades_filtered.empty:
+                    direction_map = {}
+                    for val in buy_values:
+                        direction_map[val] = '买入'
+                    for val in sell_values:
+                        direction_map[val] = '卖出'
+                    
+                    # 安全处理日期转换
+                    date_list = []
+                    for dt_val in trades_filtered[date_col]:
+                        if hasattr(dt_val, 'datetime'):
+                            date_list.append(dt_val.datetime().strftime("%Y-%m-%d"))
+                        else:
+                            date_list.append(pd.to_datetime(dt_val).strftime("%Y-%m-%d"))
+                    
+                    trades_df = pd.DataFrame({
+                        "日期": date_list,
+                        "方向": trades_filtered[dir_col].map(direction_map).values,
+                        "价格": trades_filtered[price_col].round(2).values if price_col else 0,
+                        "数量": trades_filtered[num_col].abs().astype(int).values if num_col else 0,
+                        "金额": (trades_filtered[price_col].abs() * trades_filtered[num_col].abs()).round(2).values if price_col and num_col else 0,
+                        "现金余额": trades_filtered[cash_col].round(2).values if cash_col else 0
+                    })
+                    trades_df = trades_df.sort_values(by="日期", ascending=False).reset_index(drop=True)
+                else:
+                    trades_df = pd.DataFrame(columns=["日期", "方向", "价格", "数量", "金额", "现金余额"])
             else:
                 trades_df = pd.DataFrame(columns=["日期", "方向", "价格", "数量", "金额", "现金余额"])
         else:
