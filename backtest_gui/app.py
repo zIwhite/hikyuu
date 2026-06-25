@@ -32,7 +32,7 @@ try:
     from hikyuu import (
         StockManager, SYS_Simple, SG_Flex, EMA, CLOSE,
         MM_FixedCount, ST_FixedPercent, crtTM, TC_FixedA2017,
-        Query, Datetime
+        Query, Datetime, load_hikyuu
     )
     _StockManager = StockManager
     _SYS_Simple = SYS_Simple
@@ -45,9 +45,9 @@ try:
     _TC_FixedA2017 = TC_FixedA2017
     _Query = Query
     _Datetime = Datetime
-    sm = StockManager.instance()
 
-    from hikyuu import load_hikyuu
+    # 关键：必须显式调用 load_hikyuu() 才能加载股票数据
+    # 如果不调用，StockManager 里没有数据，get_stock() 永远返回 NULL
     load_hikyuu(
         stock_list=["all"],
         ktype_list=["day"],
@@ -55,8 +55,10 @@ try:
         load_weight=False,
         start_spot=False
     )
-
+    # load_hikyuu 后重新获取 sm 实例
+    sm = StockManager.instance()
     HKU_AVAILABLE = True
+    HKU_ERROR = ""
 except Exception as e:
     HKU_AVAILABLE = False
     HKU_ERROR = repr(e)
@@ -65,7 +67,17 @@ except Exception as e:
 
 def get_hikyuu_status():
     if HKU_AVAILABLE:
-        return "✅ Hikyuu 已连接，可以进行回测"
+        try:
+            # 诊断信息：检查数据是否真的加载了
+            stock_count = sum(1 for _ in sm)
+            data_dir = sm.data_dir
+            return (
+                f"✅ Hikyuu 已连接，可以进行回测\n\n"
+                f"已加载股票数：{stock_count}\n"
+                f"数据目录：{data_dir}"
+            )
+        except Exception:
+            return "✅ Hikyuu 已连接，可以进行回测"
     else:
         py_path = sys.executable
         return f"❌ Hikyuu 未连接\n\nPython路径：{py_path}\n\n错误信息：{HKU_ERROR}"
